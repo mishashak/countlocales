@@ -1,0 +1,21 @@
+pandas>=1.3.0
+openpyxl>=3.0.0
+tqdm>=4.60.0
+langdetect>=1.0.9
+kiwipiepy>=0.15.0
+spacy>=3.4.0
+jieba>=0.42.1
+stanza>=1.7.0
+
+# spaCy 언어 모델들 (선택적 설치)
+# python -m spacy download en_core_web_sm
+# python -m spacy download es_core_news_sm
+# python -m spacy download fr_core_news_sm
+# python -m spacy download de_core_news_sm
+# python -m spacy download pt_core_news_sm
+# python -m spacy download it_core_news_sm
+# python -m spacy download ru_core_news_sm
+# python -m spacy download tr_core_news_sm
+# python -m spacy download vi_core_news_sm
+# python -m spacy download th_core_news_sm
+# python -m spacy download id_core_news_sm
