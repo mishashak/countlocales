@@ -90,9 +90,11 @@ except ImportError:
 
 try:
     import jieba
+    import jieba.posseg as pseg
 except ImportError:
     print("Warning: jieba not installed. Please install with: pip install jieba")
     jieba = None
+    pseg = None
 
 try:
     import stanza
@@ -144,10 +146,16 @@ def detect_language(text):
         return 'unknown'
     
     try:
-        # 너무 짧은 텍스트는 감지하지 않음
-        if len(text.strip()) < 3:
+        # HTML/XML 태그 제거 (언어 감지 정확도 향상)
+        clean_text = text
+        for pattern_name, pattern in SPECIAL_PATTERNS.items():
+            clean_text = pattern.sub(' ', clean_text)
+        clean_text = clean_text.strip()
+        
+        # 너무 짧은 텍스트는 감지하지 않음 (정확도 향상을 위해 최소 길이 증가)
+        if len(clean_text) < 10:
             return 'unknown'
-        return detect(text)
+        return detect(clean_text)
     except:
         return 'unknown'
 
@@ -170,37 +178,56 @@ def process_text_by_language(text, language):
     words = []
     
     if language == 'ko' and kiwi:
-        # 한국어: Kiwi 사용
+        # 한국어: Kiwi 사용 - 조사, 접속조사, 구두점, 숫자, 보조사, 접미사, 어미 제외
         try:
             tokens = kiwi.tokenize(clean_text)
-            words = [token.form for token in tokens if token.form.strip()]
+            # 조사(J), 접속조사(JC), 구두점(SF), 숫자(SN), 보조사(XS), 접미사(XP), 어미(E) 제외
+            # 단, 명사(N), 동사(V), 형용사(VA), 부사(MA), 감탄사(IC)는 포함
+            words = [token.form for token in tokens 
+                     if token.form.strip() 
+                     and not token.tag.startswith(('J', 'JC', 'SF', 'SN', 'XS', 'XP', 'E'))]  # 조사, 접속조사, 구두점, 숫자, 보조사, 접미사, 어미 제외
         except:
             words = clean_text.split()
     
     elif language in nlp_models:
-        # spaCy 지원 언어들: 영어, 스페인어, 프랑스어, 독일어, 포르투갈어, 이탈리아어, 러시아어, 터키어, 베트남어, 태국어, 인도네시아어
+        # spaCy 지원 언어들: 전치사, 접속사, 관사, 대명사, 구두점, 숫자 제외
         try:
             doc = nlp_models[language](clean_text)
-            words = [token.text for token in doc if not token.is_space and token.text.strip()]
+            # 전치사(ADP), 접속사(CCONJ, SCONJ), 관사(DET), 대명사(PRON), 구두점(PUNCT), 숫자(NUM) 제외
+            # 감탄사(INTJ), 명사(NOUN), 동사(VERB), 형용사(ADJ), 부사(ADV) 등은 포함
+            words = [token.text for token in doc 
+                     if not token.is_space 
+                     and token.text.strip()
+                     and len(token.text) > 1  # 1글자 단어 제외 (단, 의미있는 단어는 예외)
+                     and token.pos_ not in ('ADP', 'CCONJ', 'SCONJ', 'DET', 'PRON', 'PUNCT', 'NUM')
+                     and not token.is_punct  # 구두점 추가 체크
+                     and not token.like_num]  # 숫자 패턴 추가 체크
         except:
             words = clean_text.split()
     
-    elif language in ['zh-cn', 'zh-tw'] and jieba:
-        # 중국어(간체/번체): jieba 사용
+    elif language in ['zh-cn', 'zh-tw'] and jieba and pseg:
+        # 중국어(간체/번체): jieba posseg 사용 - 조사, 어조사, 접속사, 구두점, 숫자 제외
         try:
-            words = list(jieba.cut(clean_text))
-            words = [word for word in words if word.strip()]
+            # 조사(u), 어조사(y), 접속사(c), 구두점(x), 숫자(m) 제외
+            # 감탄사(e), 명사(n), 동사(v), 형용사(a), 부사(d) 등은 포함
+            words = [word for word, flag in pseg.cut(clean_text) 
+                     if word.strip() 
+                     and flag not in ('u', 'y', 'c', 'x', 'm')]
         except:
             words = clean_text.split()
     
     elif language == 'ja' and nlp_ja:
-        # 일본어: Stanza 사용
+        # 일본어: Stanza 사용 - 조사, 조동사, 접속사, 구두점, 숫자 제외
         try:
             doc = nlp_ja(clean_text)
             words = []
             for sent in doc.sentences:
                 for token in sent.tokens:
-                    words.append(token.text)
+                    # 조사(ADP), 조동사(AUX), 접속사(CCONJ, SCONJ), 구두점(PUNCT), 숫자(NUM) 제외
+                    # 감탄사(INTJ), 명사(NOUN), 동사(VERB), 형용사(ADJ), 부사(ADV) 등은 포함
+                    if (token.pos not in ('ADP', 'AUX', 'CCONJ', 'SCONJ', 'PUNCT', 'NUM')
+                        and token.text.strip()):
+                        words.append(token.text)
         except:
             words = clean_text.split()
     
@@ -299,7 +326,7 @@ def detect_column_language(df, column_index):
             continue
         
         text = str(cell_value)
-        if len(text.strip()) >= 3:  # 최소 길이 체크
+        if len(text.strip()) >= 10:  # 최소 길이 체크 (정확도 향상을 위해 증가)
             detected_lang = detect_language(text)
             if detected_lang != 'unknown':
                 language_votes.append(detected_lang)
@@ -308,7 +335,15 @@ def detect_column_language(df, column_index):
         return 'unknown'
     
     # 가장 많이 나타나는 언어 반환
-    return Counter(language_votes).most_common(1)[0][0]
+    most_common = Counter(language_votes).most_common(1)[0]
+    detected_lang = most_common[0]
+    count = most_common[1]
+    total = len(language_votes)
+    
+    # 디버깅: 언어 감지 결과 출력 (선택적)
+    # print(f"Column {column_index}: {detected_lang} ({count}/{total} votes)")
+    
+    return detected_lang
 
 def count_words_in_text(text, language):
     """텍스트에서 단어 수를 계산 (중복 포함)"""
@@ -361,7 +396,31 @@ class TempWordManager:
         return all_words
 
     def cleanup(self):
-        shutil.rmtree(self.temp_dir)
+        """임시 디렉토리 정리 (Windows 액세스 거부 오류 처리)"""
+        import time
+        import stat
+        
+        def handle_remove_readonly(func, path, exc):
+            """읽기 전용 파일 삭제를 위한 핸들러"""
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        
+        max_retries = 3
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                if os.path.exists(self.temp_dir):
+                    shutil.rmtree(self.temp_dir, onerror=handle_remove_readonly)
+                break
+            except (PermissionError, OSError) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 지수 백오프
+                else:
+                    # 최종 시도 실패 시 경고만 출력하고 계속 진행
+                    print(f"Warning: Could not delete temporary directory {self.temp_dir}: {e}")
+                    print(f"Please manually delete it if needed.")
 
 def analyze_sheet_for_words(df):
     """시트를 분석하여 단어 수를 계산"""

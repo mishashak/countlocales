@@ -74,7 +74,31 @@ class TempFileManager:
         return total_chars
 
     def cleanup(self):
-        shutil.rmtree(self.temp_dir)
+        """임시 디렉토리 정리 (Windows 액세스 거부 오류 처리)"""
+        import time
+        import stat
+        
+        def handle_remove_readonly(func, path, exc):
+            """읽기 전용 파일 삭제를 위한 핸들러"""
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        
+        max_retries = 3
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                if os.path.exists(self.temp_dir):
+                    shutil.rmtree(self.temp_dir, onerror=handle_remove_readonly)
+                break
+            except (PermissionError, OSError) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 지수 백오프
+                else:
+                    # 최종 시도 실패 시 경고만 출력하고 계속 진행
+                    print(f"Warning: Could not delete temporary directory {self.temp_dir}: {e}")
+                    print(f"Please manually delete it if needed.")
 
 def count_characters(text):
     counts = {lang: 0 for lang in PATTERNS}
